@@ -179,7 +179,12 @@ class Logger extends AbstractLogger
     {
         if ($this->options['filename']) {
             if (strpos($this->options['filename'], '.log') !== false || strpos($this->options['filename'], '.txt') !== false) {
-                $this->logFilePath[$index] = $logDirectory.DIRECTORY_SEPARATOR.$this->options['filename'];
+                if ($suffix !== '') {
+                    $pathinfoArray = pathinfo($this->options['filename']);
+                    $this->logFilePath[$index] = $logDirectory.DIRECTORY_SEPARATOR.$pathinfoArray['dirname'].DIRECTORY_SEPARATOR.$pathinfoArray['filename'].$suffix.'.'.$pathinfoArray['extension'];
+                } else {
+                    $this->logFilePath[$index] = $logDirectory.DIRECTORY_SEPARATOR.$this->options['filename'];
+                }
             } else {
                 $this->logFilePath[$index] = $logDirectory.DIRECTORY_SEPARATOR.$this->options['filename'].$suffix.'.'.$this->options['extension'];
             }
