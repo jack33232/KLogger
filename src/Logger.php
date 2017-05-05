@@ -45,13 +45,38 @@ class Logger extends AbstractLogger
         'prefix'         => 'log_',
         'logFormat'      => false,
         'appendContext'  => true,
+        'fileGroups' => [
+            'errorLogs' => [
+                'logLevels' => [
+                    LogLevel::EMERGENCY,
+                    LogLevel::ALERT,
+                    LogLevel::CRITICAL,
+                    LogLevel::ERROR
+                ],
+                'suffix' => '-[ERROR]'
+            ],
+            'warningLogs' => [
+                'logLevels' => [
+                    LogLevel::WARNING
+                ],
+                'suffix' => '-[WARNING]'
+            ],
+            'debugLogs' => [
+                'logLevels' => [
+                    LogLevel::NOTICE,
+                    LogLevel::INFO,
+                    LogLevel::DEBUG
+                ],
+                'suffix' => '-[DEBUG]'
+            ]
+        ]
     );
 
     /**
      * Path to the log file
-     * @var string
+     * @var array
      */
-    private $logFilePath;
+    private $logFilePath = [];
 
     /**
      * Current minimum logging threshold
@@ -82,9 +107,9 @@ class Logger extends AbstractLogger
 
     /**
      * This holds the file handle for this instance's log file
-     * @var resource
+     * @var array
      */
-    private $fileHandle;
+    private $fileHandle = [];
 
     /**
      * This holds the last line logged to the logger
@@ -115,46 +140,51 @@ class Logger extends AbstractLogger
         $this->options = array_merge($this->options, $options);
 
         $logDirectory = rtrim($logDirectory, DIRECTORY_SEPARATOR);
-        if ( ! file_exists($logDirectory)) {
+        if (! file_exists($logDirectory)) {
             mkdir($logDirectory, $this->defaultPermissions, true);
         }
 
-        if(strpos($logDirectory, 'php://') === 0) {
+        if (strpos($logDirectory, 'php://') === 0) {
             $this->setLogToStdOut($logDirectory);
             $this->setFileHandle('w+');
+        } elseif (!empty($this->options['fileGroups']) && is_array($this->options['fileGroups'])) {
+            foreach ($this->options['fileGroups'] as $optIndex => $setting) {
+                $this->setLogFilePath($logDirectory, $optIndex, $setting['suffix']);
+                if (file_exists($this->logFilePath[$optIndex]) && !is_writable($this->logFilePath[$optIndex])) {
+                    throw new RuntimeException('The file could not be written to. Check that appropriate permissions have been set.');
+                }
+                $this->setFileHandle('a', $optIndex);
+            }
         } else {
             $this->setLogFilePath($logDirectory);
-            if(file_exists($this->logFilePath) && !is_writable($this->logFilePath)) {
+            if (file_exists($this->logFilePath['default']) && !is_writable($this->logFilePath['default'])) {
                 throw new RuntimeException('The file could not be written to. Check that appropriate permissions have been set.');
             }
-            $this->setFileHandle('a');
-        }
-
-        if ( ! $this->fileHandle) {
-            throw new RuntimeException('The file could not be opened. Check permissions.');
+            $this->setFileHandle('a', 'default');
         }
     }
 
     /**
      * @param string $stdOutPath
      */
-    public function setLogToStdOut($stdOutPath) {
-        $this->logFilePath = $stdOutPath;
+    public function setLogToStdOut($stdOutPath)
+    {
+        $this->logFilePath['default'] = $stdOutPath;
     }
 
     /**
      * @param string $logDirectory
      */
-    public function setLogFilePath($logDirectory) {
+    public function setLogFilePath($logDirectory, $index = 'default', $suffix = '')
+    {
         if ($this->options['filename']) {
             if (strpos($this->options['filename'], '.log') !== false || strpos($this->options['filename'], '.txt') !== false) {
-                $this->logFilePath = $logDirectory.DIRECTORY_SEPARATOR.$this->options['filename'];
-            }
-            else {
-                $this->logFilePath = $logDirectory.DIRECTORY_SEPARATOR.$this->options['filename'].'.'.$this->options['extension'];
+                $this->logFilePath[$index] = $logDirectory.DIRECTORY_SEPARATOR.$this->options['filename'];
+            } else {
+                $this->logFilePath[$index] = $logDirectory.DIRECTORY_SEPARATOR.$this->options['filename'].$suffix.'.'.$this->options['extension'];
             }
         } else {
-            $this->logFilePath = $logDirectory.DIRECTORY_SEPARATOR.$this->options['prefix'].date('Y-m-d').'.'.$this->options['extension'];
+            $this->logFilePath[$index] = $logDirectory.DIRECTORY_SEPARATOR.$this->options['prefix'].date('Y-m-d').$suffix.'.'.$this->options['extension'];
         }
     }
 
@@ -163,8 +193,12 @@ class Logger extends AbstractLogger
      *
      * @internal param resource $fileHandle
      */
-    public function setFileHandle($writeMode) {
-        $this->fileHandle = fopen($this->logFilePath, $writeMode);
+    public function setFileHandle($writeMode, $index = 'default')
+    {
+        $this->fileHandle[$index] = fopen($this->logFilePath[$index], $writeMode);
+        if (! $this->fileHandle[$index]) {
+            throw new RuntimeException("The '$index' log file could not be opened. Check permissions.");
+        }
     }
 
 
@@ -173,8 +207,10 @@ class Logger extends AbstractLogger
      */
     public function __destruct()
     {
-        if ($this->fileHandle) {
-            fclose($this->fileHandle);
+        foreach ($this->fileHandle as $fileHandle) {
+            if ($fileHandle) {
+                fclose($fileHandle);
+            }
         }
     }
 
@@ -211,8 +247,17 @@ class Logger extends AbstractLogger
         if ($this->logLevels[$this->logLevelThreshold] < $this->logLevels[$level]) {
             return;
         }
+        $index = 'default';
+        if (!empty($this->options['fileGroups']) && is_array($this->options['fileGroups'])) {
+            foreach ($this->options['fileGroups'] as $optIndex => $setting) {
+                if (in_array($level, $setting['logLevels'])) {
+                    $index = $optIndex;
+                    break;
+                }
+            }
+        }
         $message = $this->formatMessage($level, $message, $context);
-        $this->write($message);
+        $this->write($message, $index);
     }
 
     /**
@@ -221,17 +266,17 @@ class Logger extends AbstractLogger
      * @param string $message Line to write to the log
      * @return void
      */
-    public function write($message)
+    public function write($message, $index = 'default')
     {
-        if (null !== $this->fileHandle) {
-            if (fwrite($this->fileHandle, $message) === false) {
+        if (null !== $this->fileHandle[$index]) {
+            if (fwrite($this->fileHandle[$index], $message) === false) {
                 throw new RuntimeException('The file could not be written to. Check that appropriate permissions have been set.');
             } else {
                 $this->lastLine = trim($message);
                 $this->logLineCount++;
 
                 if ($this->options['flushFrequency'] && $this->logLineCount % $this->options['flushFrequency'] === 0) {
-                    fflush($this->fileHandle);
+                    fflush($this->fileHandle[$index]);
                 }
             }
         }
@@ -242,9 +287,9 @@ class Logger extends AbstractLogger
      *
      * @return string
      */
-    public function getLogFilePath()
+    public function getLogFilePath($index = 'default')
     {
-        return $this->logFilePath;
+        return $this->logFilePath[$index];
     }
 
     /**
@@ -280,7 +325,6 @@ class Logger extends AbstractLogger
             foreach ($parts as $part => $value) {
                 $message = str_replace('{'.$part.'}', $value, $message);
             }
-
         } else {
             $message = "[{$this->getTimestamp()}] [{$level}] {$message}";
         }
@@ -290,7 +334,6 @@ class Logger extends AbstractLogger
         }
 
         return $message.PHP_EOL;
-
     }
 
     /**
