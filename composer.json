@@ -1,7 +1,7 @@
 {
-    "name": "katzgrau/klogger",
+    "name": "jack33232/klogger",
     "version": "1.2.1",
-    "description": "A Simple Logging Class",
+    "description": "A Simple Logging Class forked by jack33232 & add some new features",
     "keywords": ["logging"],
     "require": {
         "php": ">=5.3",
