@@ -111,6 +111,9 @@ class Logger extends AbstractLogger
      */
     private $fileHandle = [];
 
+    // Help to fix writing to wrong file while under cli mode
+    private $fileHandleMeta = [];
+
     /**
      * This holds the last line logged to the logger
      *  Used for unit tests
@@ -204,6 +207,34 @@ class Logger extends AbstractLogger
         if (! $this->fileHandle[$index]) {
             throw new RuntimeException("The '$index' log file could not be opened. Check permissions.");
         }
+
+        $this->fileHandleMeta[$index] = [
+            'write_mode' => $writeMode,
+            'created_at' => date('Y-m-d')
+        ];
+    }
+
+    public function getFileHandle($index)
+    {
+        if (!$this->options['filename']) {
+            if (!isset($this->fileHandleMeta[$index])) {
+                throw new RuntimeException("The '$index' log file handle lost its meta data.");
+            }
+
+            $today = date('Y-m-d');
+            if ($this->fileHandleMeta[$index]['created_at'] !== $today) {
+                // Close current file handle
+                if ($this->fileHandle[$index]) {
+                    fclose($this->fileHandle[$index]);
+                }
+                // Update Log File Path
+                $this->logFilePath[$index] = strtr($this->logFilePath[$index], $this->fileHandleMeta[$index]['created_at'], $today);
+                // Reset the file handle
+                $this->setFileHandle($this->fileHandleMeta[$index]['write_mode'], $index);
+            }
+        }
+
+        return $this->fileHandle[$index] ?? null;
     }
 
 
@@ -273,15 +304,16 @@ class Logger extends AbstractLogger
      */
     public function write($message, $index = 'default')
     {
-        if (null !== $this->fileHandle[$index]) {
-            if (fwrite($this->fileHandle[$index], $message) === false) {
+        $file_handle = $this->getFileHandle($index);
+        if (null !== $file_handle) {
+            if (fwrite($file_handle, $message) === false) {
                 throw new RuntimeException('The file could not be written to. Check that appropriate permissions have been set.');
             } else {
                 $this->lastLine = trim($message);
                 $this->logLineCount++;
 
                 if ($this->options['flushFrequency'] && $this->logLineCount % $this->options['flushFrequency'] === 0) {
-                    fflush($this->fileHandle[$index]);
+                    fflush($file_handle);
                 }
             }
         }
